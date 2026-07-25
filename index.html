@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>USDC → Arc Bridge (real USDC, via CCTP)</title>
+<style>
+  :root{
+    --bg:#080c12;--panel:#111a26;--panel2:#0d141d;--line:#1e2a3a;--txt:#e8eff8;--dim:#8598b0;--faint:#5a6b82;
+    --accent:#37e0c8;--accent2:#2b8cff;--ok:#25e08a;--warn:#f5b23d;--err:#ff5c6c;--mono:ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box} html,body{margin:0}
+  body{background:radial-gradient(900px 500px at 50% -12%,#122132 0%,var(--bg) 60%);color:var(--txt);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;min-height:100vh;
+    display:flex;flex-direction:column;align-items:center;padding:30px 16px}
+  .wrap{width:100%;max-width:470px}
+  header{display:flex;align-items:center;gap:11px;margin-bottom:6px}
+  .logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:grid;place-items:center;color:#04121a;font-weight:900}
+  h1{font-size:19px;font-weight:800;margin:0}
+  .tag{font-size:12px;color:var(--faint);margin:2px 0 18px 45px}
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:16px;padding:20px}
+  label{display:block;font-size:11px;color:var(--dim);margin:14px 0 6px;text-transform:uppercase;letter-spacing:.5px}
+  select,input{width:100%;background:#0a1017;border:1px solid var(--line);color:var(--txt);border-radius:12px;padding:13px 14px;font-size:15px;outline:none}
+  select:focus,input:focus{border-color:var(--accent2)}
+  .amt{display:flex;align-items:center;gap:8px}.amt input{font-size:22px;font-weight:600}
+  .pill{font-family:var(--mono);font-size:13px;color:var(--dim);white-space:nowrap}
+  .arrow{text-align:center;color:var(--dim);margin:12px 0;font-size:13px}
+  .dest{background:#0a1017;border:1px solid var(--line);border-radius:12px;padding:13px 14px;color:var(--dim);font-size:14px}.dest b{color:var(--txt)}
+  button{width:100%;margin-top:18px;border:0;border-radius:12px;padding:15px;font-size:15px;font-weight:700;cursor:pointer;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#04121a}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .bal{font-size:12px;color:var(--dim);margin-top:6px;min-height:15px}
+  .log{margin-top:16px;font-size:13px;font-family:var(--mono);background:#080d13;border:1px solid var(--line);border-radius:12px;padding:12px;max-height:230px;overflow:auto;display:none}
+  .log.show{display:block}
+  .step{padding:3px 0;color:var(--dim)}.step.ok{color:var(--ok)}.step.run{color:var(--accent)}.step.err{color:var(--err)}
+  .step a{color:var(--accent2)}
+  .gasnote{margin-top:14px;font-size:12px;color:var(--warn);background:#1c15040f;border:1px solid #3a2f0855;border-radius:10px;padding:10px 12px;line-height:1.55}
+  .note{font-size:11px;color:var(--faint);margin-top:14px;line-height:1.6}
+  .foot{text-align:center;font-size:11px;color:#4a5a6e;margin-top:18px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><div class="logo">↔</div><h1>USDC → Arc Bridge</h1></header>
+  <div class="tag">real native USDC on Arc · via Circle CCTP · not eUSD</div>
+
+  <div class="card">
+    <label>From</label>
+    <select id="srcChain"></select>
+
+    <label>Amount (USDC)</label>
+    <div class="amt"><input id="amount" type="number" min="0" step="0.01" placeholder="0.00"/><span class="pill">USDC</span></div>
+    <div class="bal" id="srcBal"></div>
+
+    <div class="arrow">↓ Circle CCTP (burn → attest → mint) ↓</div>
+
+    <label>To</label>
+    <div class="dest">Arc mainnet · you receive <b>real native USDC</b> (Circle's, not eUSD)</div>
+
+    <button id="connectBtn">Connect Wallet</button>
+    <button id="bridgeBtn" class="ghost" style="display:none">Bridge</button>
+    <div class="log" id="log"></div>
+
+    <div class="gasnote">⚠️ <b>Gas heads-up:</b> the final mint runs <i>on Arc</i>, where gas is paid in USDC. If your Arc wallet is brand-new (0 balance) the mint can't pay its own gas. You need a tiny bit of Arc USDC first — ask someone to send a few cents, or use Envelope's gas station once. After that, this bridge works every time.</div>
+    <div class="note">Non-custodial — you sign every transaction in your own wallet; this page never holds funds. Standard CCTP transfer (free) waits for Base finality (~13–19 min) before it can mint. Verify addresses against Circle's docs.</div>
+  </div>
+  <div class="foot">Circle CCTP V2 · Base → Arc mainnet · not affiliated with Circle or Arc</div>
+</div>
+
+<script type="module">
+import { createWalletClient, createPublicClient, custom, http, parseUnits, formatUnits, pad, getAddress }
+  from 'https://esm.sh/viem@2.21.55';
+
+const CCTP = {
+  tokenMessenger:'0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d',      // mainnet TokenMessengerV2
+  messageTransmitter:'0x81D40F21F12A8F0E3252Bccb954D722d4c464B64',  // mainnet MessageTransmitterV2
+  iris:'https://iris-api.circle.com',                               // production attestation
+  arc:{ name:'Arc', chainId:5042, hexId:'0x13b2', domain:26,
+        rpc:'https://5042.rpc.thirdweb.com', usdc:'0x3600000000000000000000000000000000000000', explorer:'https://arcscan.app' },
+  sources:[
+    { key:'base', name:'Base', chainId:8453, hexId:'0x2105', domain:6,
+      rpc:'https://mainnet.base.org', usdc:'0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', explorer:'https://basescan.org' },
+    { key:'eth',  name:'Ethereum', chainId:1, hexId:'0x1', domain:0,
+      rpc:'https://eth.llamarpc.com', usdc:'0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', explorer:'https://etherscan.io' },
+    { key:'arb',  name:'Arbitrum', chainId:42161, hexId:'0xa4b1', domain:3,
+      rpc:'https://arb1.arbitrum.io/rpc', usdc:'0xaf88d065e77c8cC2239327C5EDb3A432268e5831', explorer:'https://arbiscan.io' },
+  ],
+};
+const ERC20=[{name:'approve',type:'function',stateMutability:'nonpayable',inputs:[{type:'address'},{type:'uint256'}],outputs:[{type:'bool'}]},
+  {name:'allowance',type:'function',stateMutability:'view',inputs:[{type:'address'},{type:'address'}],outputs:[{type:'uint256'}]},
+  {name:'balanceOf',type:'function',stateMutability:'view',inputs:[{type:'address'}],outputs:[{type:'uint256'}]}];
+const TM=[{name:'depositForBurn',type:'function',stateMutability:'nonpayable',inputs:[{type:'uint256'},{type:'uint32'},{type:'bytes32'},{type:'address'},{type:'bytes32'},{type:'uint256'},{type:'uint32'}],outputs:[]}];
+const MT=[{name:'receiveMessage',type:'function',stateMutability:'nonpayable',inputs:[{type:'bytes'},{type:'bytes'}],outputs:[{type:'bool'}]}];
+
+const $=s=>document.querySelector(s);
+const sel=$('#srcChain'); CCTP.sources.forEach((s,i)=>{const o=document.createElement('option');o.value=i;o.textContent=s.name;sel.appendChild(o);});
+let account=null,src=CCTP.sources[0],wallet=null;
+sel.onchange=()=>{src=CCTP.sources[sel.value];refreshBal();};
+const pub=c=>createPublicClient({transport:http(c.rpc)});
+const logEl=$('#log');
+function step(t,cls='',href){logEl.classList.add('show');const d=document.createElement('div');d.className='step '+cls;
+  d.innerHTML=`${cls==='ok'?'✓':cls==='err'?'✕':cls==='run'?'◷':'•'} ${t}${href?` <a href="${href}" target="_blank">↗</a>`:''}`;logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;return d;}
+function setStep(d,cls,x){d.className='step '+cls;if(x)d.innerHTML+=x;}
+async function refreshBal(){ if(!account){$('#srcBal').textContent='';return;}
+  try{const b=await pub(src).readContract({address:getAddress(src.usdc),abi:ERC20,functionName:'balanceOf',args:[account]});
+    $('#srcBal').textContent=`Balance: ${(+formatUnits(b,6)).toFixed(2)} USDC on ${src.name}`;}catch(e){$('#srcBal').textContent='';} }
+$('#connectBtn').onclick=async()=>{ if(!window.ethereum){alert('No wallet found. Install MetaMask.');return;}
+  const [a]=await window.ethereum.request({method:'eth_requestAccounts'}); account=getAddress(a);
+  wallet=createWalletClient({account,transport:custom(window.ethereum)});
+  $('#connectBtn').textContent=account.slice(0,6)+'…'+account.slice(-4); $('#bridgeBtn').style.display='block'; refreshBal(); };
+async function switchChain(c){ try{await window.ethereum.request({method:'wallet_switchEthereumChain',params:[{chainId:c.hexId}]});}
+  catch(e){ if(e.code===4902){await window.ethereum.request({method:'wallet_addEthereumChain',params:[{chainId:c.hexId,chainName:c.name,nativeCurrency:{name:'USDC',symbol:'USDC',decimals:18},rpcUrls:[c.rpc],blockExplorerUrls:[c.explorer]}]});}else throw e; } }
+$('#bridgeBtn').onclick=async()=>{
+  const v=$('#amount').value; if(!v||+v<=0){alert('Enter an amount');return;}
+  const amt=parseUnits(v,6); $('#bridgeBtn').disabled=true; logEl.innerHTML='';
+  try{
+    const arc=CCTP.arc, maxFee=0n, finality=2000;   // standard transfer = free (waits Base finality)
+    let s=step(`Switch wallet to ${src.name}`,'run'); await switchChain(src); setStep(s,'ok');
+    s=step('Approve USDC','run');
+    const al=await pub(src).readContract({address:getAddress(src.usdc),abi:ERC20,functionName:'allowance',args:[account,getAddress(CCTP.tokenMessenger)]});
+    if(al<amt){const h=await wallet.writeContract({chain:null,address:getAddress(src.usdc),abi:ERC20,functionName:'approve',args:[getAddress(CCTP.tokenMessenger),amt]});await pub(src).waitForTransactionReceipt({hash:h});}
+    setStep(s,'ok');
+    s=step('Burn on '+src.name,'run');
+    const burn=await wallet.writeContract({chain:null,address:getAddress(CCTP.tokenMessenger),abi:TM,functionName:'depositForBurn',args:[amt,arc.domain,pad(account,{size:32}),getAddress(src.usdc),pad('0x',{size:32}),maxFee,finality]});
+    await pub(src).waitForTransactionReceipt({hash:burn}); setStep(s,'ok',` <a href="${src.explorer}/tx/${burn}" target="_blank">↗</a>`);
+    s=step('Waiting for Circle attestation (~13–19 min for free tier)…','run');
+    let msg,att;
+    for(let i=0;i<240;i++){ try{const j=await(await fetch(`${CCTP.iris}/v2/messages/${src.domain}?transactionHash=${burn}`)).json();
+      const m=(j.messages||[])[0]; if(m&&m.status==='complete'&&m.attestation?.startsWith('0x')){msg=m.message;att=m.attestation;break;} }catch(e){} await new Promise(r=>setTimeout(r,5000)); }
+    if(!att){setStep(s,'err',' — timed out. Re-run mint later with your burn tx.');throw new Error('attestation timeout');} setStep(s,'ok');
+    s=step('Mint real USDC on Arc','run');
+    await switchChain(arc);
+    try{
+      const mint=await wallet.writeContract({chain:null,address:getAddress(CCTP.messageTransmitter),abi:MT,functionName:'receiveMessage',args:[msg,att]});
+      await pub(arc).waitForTransactionReceipt({hash:mint}); setStep(s,'ok',` <a href="${arc.explorer}/tx/${mint}" target="_blank">↗</a>`);
+      step(`🎉 Done — ${v} real USDC now on Arc`,'ok');
+    }catch(e){ setStep(s,'err',' — mint failed. If it says "insufficient funds", your Arc wallet has no gas yet (see the gas note). Your USDC is safe & attested; re-run this mint once you have a little Arc gas.'); throw e; }
+  }catch(e){ step('Stopped: '+(e.shortMessage||e.message||e),'err'); }
+  finally{ $('#bridgeBtn').disabled=false; refreshBal(); }
+};
+if(window.ethereum){ window.ethereum.on?.('chainChanged',()=>refreshBal()); window.ethereum.on?.('accountsChanged',()=>location.reload()); }
+</script>
+</body>
+</html>
