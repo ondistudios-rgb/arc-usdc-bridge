@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Finish a pending bridge → Arc</title>
+<style>
+  :root{--bg:#080c12;--panel:#111a26;--panel2:#0d141d;--line:#1e2a3a;--txt:#e8eff8;--dim:#8598b0;--faint:#5a6b82;--accent:#37e0c8;--accent2:#2b8cff;--ok:#25e08a;--warn:#f5b23d;--err:#ff5c6c;--mono:ui-monospace,Menlo,monospace;}
+  *{box-sizing:border-box}html,body{margin:0}
+  body{background:radial-gradient(900px 500px at 50% -12%,#122132 0%,var(--bg) 60%);color:var(--txt);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:30px 16px}
+  .wrap{width:100%;max-width:470px}
+  h1{font-size:19px;margin:0 0 4px}.tag{font-size:12px;color:var(--faint);margin-bottom:18px}
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:16px;padding:20px}
+  label{display:block;font-size:11px;color:var(--dim);margin:14px 0 6px;text-transform:uppercase;letter-spacing:.5px}
+  select,input{width:100%;background:#0a1017;border:1px solid var(--line);color:var(--txt);border-radius:12px;padding:12px 14px;font-size:14px;outline:none;font-family:var(--mono)}
+  button{width:100%;margin-top:16px;border:0;border-radius:12px;padding:15px;font-size:15px;font-weight:700;cursor:pointer;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#04121a}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .log{margin-top:16px;font-size:13px;font-family:var(--mono);background:#080d13;border:1px solid var(--line);border-radius:12px;padding:12px;max-height:240px;overflow:auto;display:none}
+  .log.show{display:block}
+  .step{padding:3px 0;color:var(--dim)}.step.ok{color:var(--ok)}.step.run{color:var(--accent)}.step.err{color:var(--err)}.step a{color:var(--accent2)}
+  .note{font-size:11px;color:var(--faint);margin-top:14px;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Finish a pending bridge → Arc</h1>
+  <div class="tag">claims a burn that was attested but never minted · gives real USDC on Arc</div>
+  <div class="card">
+    <label>Source chain (where you burned)</label>
+    <select id="srcDomain">
+      <option value="6">Base</option><option value="0">Ethereum</option><option value="3">Arbitrum</option>
+    </select>
+    <label>Your burn transaction hash</label>
+    <input id="burnTx" placeholder="0x…"/>
+    <button id="connectBtn">Connect Wallet</button>
+    <button id="finishBtn" class="ghost" style="display:none">Fetch attestation & mint on Arc</button>
+    <div class="log" id="log"></div>
+    <div class="note">Uses Circle's attestation for your existing burn and submits the mint on Arc. Needs a tiny bit of Arc gas (native USDC). Non-custodial — you sign the mint yourself.</div>
+  </div>
+</div>
+<script type="module">
+import { createWalletClient, createPublicClient, custom, http, getAddress } from 'https://esm.sh/viem@2.21.55';
+const ARC={chainId:5042,hexId:'0x13b2',rpc:'https://5042.rpc.thirdweb.com',explorer:'https://arcscan.app',name:'Arc',
+  messageTransmitter:'0x81D40F21F12A8F0E3252Bccb954D722d4c464B64'};
+const IRIS='https://iris-api.circle.com';
+const MT=[{name:'receiveMessage',type:'function',stateMutability:'nonpayable',inputs:[{type:'bytes'},{type:'bytes'}],outputs:[{type:'bool'}]}];
+const $=s=>document.querySelector(s);
+let account=null,wallet=null;
+const logEl=$('#log');
+function step(t,cls='',href){logEl.classList.add('show');const d=document.createElement('div');d.className='step '+cls;d.innerHTML=`${cls==='ok'?'✓':cls==='err'?'✕':cls==='run'?'◷':'•'} ${t}${href?` <a href="${href}" target="_blank">↗</a>`:''}`;logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;return d;}
+function setStep(d,cls,x){d.className='step '+cls;if(x)d.innerHTML+=x;}
+async function switchChain(){ try{await window.ethereum.request({method:'wallet_switchEthereumChain',params:[{chainId:ARC.hexId}]});}
+  catch(e){ if(e.code===4902){await window.ethereum.request({method:'wallet_addEthereumChain',params:[{chainId:ARC.hexId,chainName:ARC.name,nativeCurrency:{name:'USDC',symbol:'USDC',decimals:18},rpcUrls:[ARC.rpc],blockExplorerUrls:[ARC.explorer]}]});}else throw e; } }
+$('#connectBtn').onclick=async()=>{ if(!window.ethereum){alert('No wallet found');return;}
+  const [a]=await window.ethereum.request({method:'eth_requestAccounts'}); account=getAddress(a);
+  wallet=createWalletClient({account,transport:custom(window.ethereum)});
+  $('#connectBtn').textContent=account.slice(0,6)+'…'+account.slice(-4); $('#finishBtn').style.display='block'; };
+$('#finishBtn').onclick=async()=>{
+  const dom=$('#srcDomain').value, tx=$('#burnTx').value.trim();
+  if(!tx.startsWith('0x')){alert('Paste your burn tx hash');return;}
+  $('#finishBtn').disabled=true; logEl.innerHTML='';
+  try{
+    let s=step('Fetching Circle attestation…','run'); let msg,att;
+    for(let i=0;i<60;i++){ try{const j=await(await fetch(`${IRIS}/v2/messages/${dom}?transactionHash=${tx}`)).json();
+      const m=(j.messages||[])[0]; if(m){ if(m.status==='complete'&&m.attestation?.startsWith('0x')){msg=m.message;att=m.attestation;break;} setStep(s,'run',` — status: ${m.status}`);} }catch(e){}
+      await new Promise(r=>setTimeout(r,5000)); }
+    if(!att){setStep(s,'err',' — not ready yet. Wait until Circle shows "complete", then try again.');throw new Error('not attested');}
+    setStep(s,'ok');
+    s=step('Switch wallet to Arc','run'); await switchChain(); setStep(s,'ok');
+    s=step('Mint real USDC on Arc','run');
+    const pub=createPublicClient({transport:http(ARC.rpc)});
+    const h=await wallet.writeContract({chain:null,address:getAddress(ARC.messageTransmitter),abi:MT,functionName:'receiveMessage',args:[msg,att]});
+    await pub.waitForTransactionReceipt({hash:h}); setStep(s,'ok',` <a href="${ARC.explorer}/tx/${h}" target="_blank">↗</a>`);
+    step('🎉 Done — your USDC is now on Arc','ok');
+  }catch(e){ step('Stopped: '+(e.shortMessage||e.message||e),'err'); if((e.message||'').includes('funds')) step('↳ Looks like no Arc gas. Get a few cents of Arc USDC, then retry — attestation stays valid.','err'); }
+  finally{ $('#finishBtn').disabled=false; }
+};
+</script>
+</body>
+</html>
