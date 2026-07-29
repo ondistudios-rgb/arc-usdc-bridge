@@ -136,7 +136,9 @@ async function gwBalance(){
   const r=await fetch(`${API}/v1/balances`,{method:"POST",headers:HDR,
     body:JSON.stringify({token:"USDC",sources:[{domain:BASE.domain,depositor:account}]})});
   const j=await r.json(); const b=(j.balances||[])[0]||{};
-  return {avail:BigInt(b.balance||0), pending:BigInt(b.pendingBatch||0)};
+  // NOTE: Circle returns decimal strings like "9.900000" (NOT raw units) -> convert to 6dp bigint
+  const toRaw = v => { const n = parseFloat(String(v ?? '0')); return BigInt(Math.round((isNaN(n)?0:n) * 1e6)); };
+  return {avail: toRaw(b.balance), pending: toRaw(b.pendingBatch)};
 }
 async function refresh(verbose){
   if(!account){ if(verbose) step('connect your wallet first','err'); return; }
