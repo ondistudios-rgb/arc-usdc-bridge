@@ -52,6 +52,7 @@
       <button id="transfer">3 · Bridge</button>
     </div>
 
+    <div id="pending" style="display:none;font-size:12px;color:var(--warn);background:#1c15040f;border:1px solid #3a2f0855;border-radius:10px;padding:10px 12px;margin-top:14px;line-height:1.6"></div>
     <div class="steps" id="steps"></div>
 
     <div class="warn">⏱️ <b>Deposit needs Base finality (~15–20 min)</b> before it can be bridged. Deposit → wait → Check → Bridge. After that the mint on Arc lands in seconds.</div>
@@ -88,6 +89,40 @@ function step(t,cls='',href){stepsEl.classList.add('show');const d=document.crea
 function setStep(d,cls,x){d.className='s '+cls;if(x)d.innerHTML+=x;}
 const b32=a=>"0x"+"00".repeat(12)+a.slice(2).toLowerCase();
 
+// ---- remember pending deposits across refreshes ----
+const LSK='arc_gw_deposits';
+function loadDeps(){ try{return JSON.parse(localStorage.getItem(LSK)||'{}');}catch(e){return {};} }
+function saveDep(addr,d){ const a=loadDeps(); a[addr.toLowerCase()]=d; localStorage.setItem(LSK,JSON.stringify(a)); }
+function clearDep(addr){ const a=loadDeps(); delete a[addr.toLowerCase()]; localStorage.setItem(LSK,JSON.stringify(a)); }
+function getDep(addr){ return loadDeps()[addr.toLowerCase()]; }
+
+// find a recent deposit on-chain even if localStorage was cleared / different browser
+async function findOnchainDeposit(addr){
+  try{
+    const r=await fetch(`https://base.blockscout.com/api/v2/addresses/${addr}/transactions`);
+    const j=await r.json();
+    for(const t of (j.items||[])){
+      const to=((t.to||{}).hash||'').toLowerCase();
+      if(to===GW_WALLET.toLowerCase() && (t.method||'').toLowerCase()==='deposit' && t.status==='ok'){
+        return {ts:Date.parse(t.timestamp), hash:t.hash, amount:null};
+      }
+    }
+  }catch(e){}
+  return null;
+}
+function renderPending(dep, gwAvail){
+  const el=$('#pending');
+  if(!dep || (gwAvail && gwAvail>0n)){ el.style.display='none'; return; }
+  const mins=(Date.now()-dep.ts)/60000;
+  const left=Math.max(0, 20-mins);
+  el.style.display='block';
+  el.innerHTML = `⏳ <b>Deposit pending</b>${dep.amount?` — ${dep.amount} USDC`:''}<br>`+
+    `deposited ${new Date(dep.ts).toLocaleTimeString()} · <b>${mins.toFixed(0)} min ago</b><br>`+
+    (left>0 ? `Base finality usually clears at 15–20 min — <b>~${left.toFixed(0)} min left</b>. This page checks automatically.`
+            : `Past the usual window — checking every 30s. If it doesn't appear soon, Circle's indexer is lagging; funds are safe in the contract.`)+
+    (dep.hash?`<br><a href="${BASE.explorer}/tx/${dep.hash}" target="_blank">deposit tx ↗</a>`:'');
+}
+
 async function gwBalance(){
   const r=await fetch(`${API}/v1/balances`,{method:"POST",headers:HDR,
     body:JSON.stringify({token:"USDC",sources:[{domain:BASE.domain,depositor:account}]})});
@@ -109,6 +144,9 @@ async function refresh(verbose){
     (gw.pending>0n?` (pending ${(+formatUnits(gw.pending,6)).toFixed(4)})`:'')+
     `<br>Arc USDC: <b>${(+formatUnits(au,6)).toFixed(4)}</b>`+
     `<br><span style="color:var(--faint)">updated ${new Date().toLocaleTimeString()}</span>`;
+  const dep=getDep(account);
+  renderPending(dep, gw.avail);
+  if(gw.avail>0n && dep) clearDep(account);
   if(verbose){
     if(errs.length){ setStep(s,'err',' — '+errs.join(' | ')); }
     else if(gw.avail>0n){ setStep(s,'ok',` — Gateway ready: ${(+formatUnits(gw.avail,6)).toFixed(4)} USDC. You can Bridge now.`); }
@@ -127,7 +165,13 @@ $('#connect').onclick=async()=>{
   const [a]=await window.ethereum.request({method:'eth_requestAccounts'});
   account=getAddress(a); wallet=createWalletClient({account,transport:custom(window.ethereum)});
   $('#connect').textContent=account.slice(0,6)+'…'+account.slice(-4);
-  $('#actions').style.display='flex'; refresh(true);
+  $('#actions').style.display='flex';
+  if(!getDep(account)){
+    const d=await findOnchainDeposit(account);
+    if(d) saveDep(account,d);
+  }
+  refresh(true);
+  if(!window.__gwPoll) window.__gwPoll=setInterval(()=>refresh(false), 30000);  // auto-update
 };
 $('#refresh').onclick=()=>refresh(true);
 
@@ -145,7 +189,8 @@ $('#deposit').onclick=async()=>{
     const h=await wallet.writeContract({chain:null,address:getAddress(GW_WALLET),abi:GWW,functionName:'deposit',args:[getAddress(BASE.usdc),amt]});
     await pub(BASE).waitForTransactionReceipt({hash:h});
     setStep(s,'ok',` <a href="${BASE.explorer}/tx/${h}" target="_blank">↗</a>`);
-    step('⏱️ now wait ~15–20 min for Base finality, then hit "2 · Check"','ok');
+    saveDep(account,{ts:Date.now(),hash:h,amount:v});
+    step('⏱️ now wait ~15–20 min for Base finality — this page will keep checking automatically','ok');
     refresh(false);
   }catch(e){ step('Error: '+(e.shortMessage||e.message),'err'); }
   finally{ $('#deposit').disabled=false; }
