@@ -94,16 +94,27 @@ async function gwBalance(){
   const j=await r.json(); const b=(j.balances||[])[0]||{};
   return {avail:BigInt(b.balance||0), pending:BigInt(b.pendingBatch||0)};
 }
-async function refresh(){
-  if(!account) return;
-  const [bu,au,gw]=await Promise.all([
-    pub(BASE).readContract({address:getAddress(BASE.usdc),abi:ERC20,functionName:'balanceOf',args:[account]}),
-    pub(ARC).readContract({address:getAddress(ARC.usdc),abi:ERC20,functionName:'balanceOf',args:[account]}),
-    gwBalance()]);
+async function refresh(verbose){
+  if(!account){ if(verbose) step('connect your wallet first','err'); return; }
+  const s = verbose ? step('Checking balances…','run') : null;
+  let bu=0n,au=0n,gw={avail:0n,pending:0n}, errs=[];
+  try{ bu=await pub(BASE).readContract({address:getAddress(BASE.usdc),abi:ERC20,functionName:'balanceOf',args:[account]}); }
+  catch(e){ errs.push('Base RPC: '+(e.shortMessage||e.message||e)); }
+  try{ au=await pub(ARC).readContract({address:getAddress(ARC.usdc),abi:ERC20,functionName:'balanceOf',args:[account]}); }
+  catch(e){ errs.push('Arc RPC: '+(e.shortMessage||e.message||e)); }
+  try{ gw=await gwBalance(); }
+  catch(e){ errs.push('Circle API: '+(e.message||e)); }
   $('#bal').innerHTML=`Base USDC: <b>${(+formatUnits(bu,6)).toFixed(4)}</b> · `+
     `Gateway ready: <b>${(+formatUnits(gw.avail,6)).toFixed(4)}</b>`+
     (gw.pending>0n?` (pending ${(+formatUnits(gw.pending,6)).toFixed(4)})`:'')+
-    `<br>Arc USDC: <b>${(+formatUnits(au,6)).toFixed(4)}</b>`;
+    `<br>Arc USDC: <b>${(+formatUnits(au,6)).toFixed(4)}</b>`+
+    `<br><span style="color:var(--faint)">updated ${new Date().toLocaleTimeString()}</span>`;
+  if(verbose){
+    if(errs.length){ setStep(s,'err',' — '+errs.join(' | ')); }
+    else if(gw.avail>0n){ setStep(s,'ok',` — Gateway ready: ${(+formatUnits(gw.avail,6)).toFixed(4)} USDC. You can Bridge now.`); }
+    else if(gw.pending>0n){ setStep(s,'ok',` — deposit seen, still finalizing (pending ${(+formatUnits(gw.pending,6)).toFixed(4)}). Check again in a few min.`); }
+    else { setStep(s,'ok',' — no Gateway deposit yet. Use "1 · Deposit" first.'); }
+  }
 }
 async function switchChain(c){
   try{await window.ethereum.request({method:'wallet_switchEthereumChain',params:[{chainId:c.hexId}]});}
@@ -116,9 +127,9 @@ $('#connect').onclick=async()=>{
   const [a]=await window.ethereum.request({method:'eth_requestAccounts'});
   account=getAddress(a); wallet=createWalletClient({account,transport:custom(window.ethereum)});
   $('#connect').textContent=account.slice(0,6)+'…'+account.slice(-4);
-  $('#actions').style.display='flex'; refresh();
+  $('#actions').style.display='flex'; refresh(true);
 };
-$('#refresh').onclick=refresh;
+$('#refresh').onclick=()=>refresh(true);
 
 $('#deposit').onclick=async()=>{
   const v=$('#amt').value; if(!v||+v<=0){alert('Enter an amount');return;}
@@ -135,7 +146,7 @@ $('#deposit').onclick=async()=>{
     await pub(BASE).waitForTransactionReceipt({hash:h});
     setStep(s,'ok',` <a href="${BASE.explorer}/tx/${h}" target="_blank">↗</a>`);
     step('⏱️ now wait ~15–20 min for Base finality, then hit "2 · Check"','ok');
-    refresh();
+    refresh(false);
   }catch(e){ step('Error: '+(e.shortMessage||e.message),'err'); }
   finally{ $('#deposit').disabled=false; }
 };
@@ -183,7 +194,7 @@ $('#transfer').onclick=async()=>{
       functionName:'gatewayMint',args:[att,asig]});
     await pub(ARC).waitForTransactionReceipt({hash:h});
     setStep(s,'ok',` <a href="${ARC.explorer}/tx/${h}" target="_blank">↗</a>`);
-    step(`🎉 ${v} USDC now on Arc`,'ok'); refresh();
+    step(`🎉 ${v} USDC now on Arc`,'ok'); refresh(false);
   }catch(e){ step('Error: '+(e.shortMessage||e.message),'err'); }
   finally{ $('#transfer').disabled=false; }
 };
