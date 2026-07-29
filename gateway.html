@@ -42,7 +42,10 @@
 
   <div class="card">
     <label>Amount (USDC on Base)</label>
-    <input id="amt" type="number" min="0" step="0.01" placeholder="0.00"/>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input id="amt" type="number" min="0" step="0.01" placeholder="0.00" style="flex:1"/>
+      <button id="max" style="flex:0 0 auto;margin:0;padding:12px 16px;font-size:13px" class="ghost">MAX</button>
+    </div>
     <div class="bal" id="bal"></div>
 
     <button id="connect">Connect Wallet</button>
@@ -191,6 +194,16 @@ $('#connect').onclick=async()=>{
   if(!window.__gwPoll) window.__gwPoll=setInterval(()=>refresh(false), 30000);  // auto-update
 };
 $('#refresh').onclick=()=>refresh(true);
+// MAX = full Gateway balance minus fee headroom, so amount+fee always fits
+$('#max').onclick=async()=>{
+  if(!account){ step('connect your wallet first','err'); return; }
+  try{
+    const gw=await gwBalance();
+    const usable = gw.avail > 30000n ? gw.avail - 30000n : 0n;   // reserve 0.03 for fee
+    $('#amt').value = (Number(usable)/1e6).toFixed(2);
+    step(`MAX set to ${(Number(usable)/1e6).toFixed(2)} (reserved 0.03 USDC for the fee)`,'ok');
+  }catch(e){ step('could not read Gateway balance: '+(e.message||e),'err'); }
+};
 
 $('#deposit').onclick=async()=>{
   const v=$('#amt').value; if(!v||+v<=0){alert('Enter an amount');return;}
