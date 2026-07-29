@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Base → Arc via Circle Gateway</title>
+<style>
+  :root{--bg:#080c12;--panel:#111a26;--panel2:#0d141d;--line:#1e2a3a;--txt:#e8eff8;--dim:#8598b0;
+    --faint:#5a6b82;--accent:#37e0c8;--accent2:#2b8cff;--ok:#25e08a;--warn:#f5b23d;--err:#ff5c6c;
+    --mono:ui-monospace,Menlo,monospace;}
+  *{box-sizing:border-box} html,body{margin:0}
+  body{background:radial-gradient(900px 500px at 50% -12%,#122132 0%,var(--bg) 60%);color:var(--txt);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;min-height:100vh;
+    display:flex;flex-direction:column;align-items:center;padding:30px 16px}
+  .wrap{width:100%;max-width:500px}
+  header{display:flex;align-items:center;gap:11px;margin-bottom:4px}
+  .logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:grid;place-items:center;color:#04121a;font-weight:900}
+  h1{font-size:19px;margin:0}
+  .tag{font-size:12px;color:var(--faint);margin:0 0 18px 45px}
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:16px;padding:20px}
+  label{display:block;font-size:11px;color:var(--dim);margin:14px 0 6px;text-transform:uppercase;letter-spacing:.5px}
+  input{width:100%;background:#0a1017;border:1px solid var(--line);color:var(--txt);border-radius:12px;padding:13px 14px;font-size:22px;font-weight:600;outline:none}
+  input:focus{border-color:var(--accent2)}
+  .row{display:flex;gap:8px}
+  button{flex:1;margin-top:14px;border:0;border-radius:12px;padding:14px;font-size:14px;font-weight:700;cursor:pointer;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#04121a}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .bal{font-size:12px;color:var(--dim);margin-top:8px;line-height:1.7}
+  .bal b{color:var(--txt)}
+  .steps{margin-top:16px;font-size:12px;font-family:var(--mono);background:#080d13;border:1px solid var(--line);border-radius:12px;padding:12px;max-height:240px;overflow:auto;display:none}
+  .steps.show{display:block}
+  .s{padding:3px 0;color:var(--dim)}.s.ok{color:var(--ok)}.s.run{color:var(--accent)}.s.err{color:var(--err)}
+  .s a{color:var(--accent2)}
+  .note{font-size:11px;color:var(--faint);margin-top:14px;line-height:1.6}
+  .warn{font-size:12px;color:var(--warn);background:#1c15040f;border:1px solid #3a2f0855;border-radius:10px;padding:10px 12px;margin-top:14px;line-height:1.55}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><div class="logo">⚡</div><h1>Base → Arc</h1></header>
+  <div class="tag">Circle <b>Gateway</b> — the route that works today (CCTP-to-Arc is not live)</div>
+
+  <div class="card">
+    <label>Amount (USDC on Base)</label>
+    <input id="amt" type="number" min="0" step="0.01" placeholder="0.00"/>
+    <div class="bal" id="bal"></div>
+
+    <button id="connect">Connect Wallet</button>
+    <div class="row" id="actions" style="display:none">
+      <button id="deposit" class="ghost">1 · Deposit</button>
+      <button id="refresh" class="ghost">2 · Check</button>
+      <button id="transfer">3 · Bridge</button>
+    </div>
+
+    <div class="steps" id="steps"></div>
+
+    <div class="warn">⏱️ <b>Deposit needs Base finality (~15–20 min)</b> before it can be bridged. Deposit → wait → Check → Bridge. After that the mint on Arc lands in seconds.</div>
+    <div class="note">Non-custodial — every transaction is signed in your own wallet; this page never holds funds or keys. Arc is only exposed by Circle's API with the <code>X-ARC-PRIVATE-MAINNET-ENABLED</code> header, so this route is early/undocumented. Start small.</div>
+  </div>
+</div>
+
+<script type="module">
+import { createWalletClient, createPublicClient, custom, http, parseUnits, formatUnits, getAddress }
+  from 'https://esm.sh/viem@2.21.55';
+
+const API="https://gateway-api.circle.com";
+const HDR={"Content-Type":"application/json","X-ARC-PRIVATE-MAINNET-ENABLED":"true"};
+const BASE={name:"Base",hexId:"0x2105",chainId:8453,domain:6,rpc:"https://mainnet.base.org",
+  usdc:"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",explorer:"https://basescan.org"};
+const ARC={name:"Arc",hexId:"0x13b2",chainId:5042,domain:26,rpc:"https://5042.rpc.thirdweb.com",
+  usdc:"0x3600000000000000000000000000000000000000",explorer:"https://arcscan.app"};
+const GW_WALLET="0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE";
+const GW_MINTER="0x2222222d7164433c4C09B0b0D809a9b52C04C205";
+
+const ERC20=[{name:"approve",type:"function",stateMutability:"nonpayable",inputs:[{type:"address"},{type:"uint256"}],outputs:[{type:"bool"}]},
+ {name:"allowance",type:"function",stateMutability:"view",inputs:[{type:"address"},{type:"address"}],outputs:[{type:"uint256"}]},
+ {name:"balanceOf",type:"function",stateMutability:"view",inputs:[{type:"address"}],outputs:[{type:"uint256"}]}];
+const GWW=[{name:"deposit",type:"function",stateMutability:"nonpayable",inputs:[{type:"address"},{type:"uint256"}],outputs:[]}];
+const GWM=[{name:"gatewayMint",type:"function",stateMutability:"nonpayable",inputs:[{type:"bytes"},{type:"bytes"}],outputs:[]}];
+
+const $=s=>document.querySelector(s);
+const pub=c=>createPublicClient({transport:http(c.rpc)});
+let account=null, wallet=null;
+const stepsEl=$('#steps');
+function step(t,cls='',href){stepsEl.classList.add('show');const d=document.createElement('div');
+  d.className='s '+cls;d.innerHTML=`${cls==='ok'?'✓':cls==='err'?'✕':cls==='run'?'◷':'•'} ${t}${href?` <a href="${href}" target="_blank">↗</a>`:''}`;
+  stepsEl.appendChild(d);stepsEl.scrollTop=stepsEl.scrollHeight;return d;}
+function setStep(d,cls,x){d.className='s '+cls;if(x)d.innerHTML+=x;}
+const b32=a=>"0x"+"00".repeat(12)+a.slice(2).toLowerCase();
+
+async function gwBalance(){
+  const r=await fetch(`${API}/v1/balances`,{method:"POST",headers:HDR,
+    body:JSON.stringify({token:"USDC",sources:[{domain:BASE.domain,depositor:account}]})});
+  const j=await r.json(); const b=(j.balances||[])[0]||{};
+  return {avail:BigInt(b.balance||0), pending:BigInt(b.pendingBatch||0)};
+}
+async function refresh(){
+  if(!account) return;
+  const [bu,au,gw]=await Promise.all([
+    pub(BASE).readContract({address:getAddress(BASE.usdc),abi:ERC20,functionName:'balanceOf',args:[account]}),
+    pub(ARC).readContract({address:getAddress(ARC.usdc),abi:ERC20,functionName:'balanceOf',args:[account]}),
+    gwBalance()]);
+  $('#bal').innerHTML=`Base USDC: <b>${(+formatUnits(bu,6)).toFixed(4)}</b> · `+
+    `Gateway ready: <b>${(+formatUnits(gw.avail,6)).toFixed(4)}</b>`+
+    (gw.pending>0n?` (pending ${(+formatUnits(gw.pending,6)).toFixed(4)})`:'')+
+    `<br>Arc USDC: <b>${(+formatUnits(au,6)).toFixed(4)}</b>`;
+}
+async function switchChain(c){
+  try{await window.ethereum.request({method:'wallet_switchEthereumChain',params:[{chainId:c.hexId}]});}
+  catch(e){ if(e.code===4902){await window.ethereum.request({method:'wallet_addEthereumChain',params:[{
+    chainId:c.hexId,chainName:c.name,nativeCurrency:{name:'USDC',symbol:'USDC',decimals:18},
+    rpcUrls:[c.rpc],blockExplorerUrls:[c.explorer]}]});} else throw e; } }
+
+$('#connect').onclick=async()=>{
+  if(!window.ethereum){alert('No wallet found. Install MetaMask.');return;}
+  const [a]=await window.ethereum.request({method:'eth_requestAccounts'});
+  account=getAddress(a); wallet=createWalletClient({account,transport:custom(window.ethereum)});
+  $('#connect').textContent=account.slice(0,6)+'…'+account.slice(-4);
+  $('#actions').style.display='flex'; refresh();
+};
+$('#refresh').onclick=refresh;
+
+$('#deposit').onclick=async()=>{
+  const v=$('#amt').value; if(!v||+v<=0){alert('Enter an amount');return;}
+  const amt=parseUnits(v,6); $('#deposit').disabled=true; stepsEl.innerHTML='';
+  try{
+    let s=step(`Switch to ${BASE.name}`,'run'); await switchChain(BASE); setStep(s,'ok');
+    s=step('Approve USDC → GatewayWallet','run');
+    const al=await pub(BASE).readContract({address:getAddress(BASE.usdc),abi:ERC20,functionName:'allowance',args:[account,getAddress(GW_WALLET)]});
+    if(al<amt){const h=await wallet.writeContract({chain:null,address:getAddress(BASE.usdc),abi:ERC20,functionName:'approve',args:[getAddress(GW_WALLET),amt]});
+      await pub(BASE).waitForTransactionReceipt({hash:h});}
+    setStep(s,'ok');
+    s=step(`Deposit ${v} USDC into Gateway`,'run');
+    const h=await wallet.writeContract({chain:null,address:getAddress(GW_WALLET),abi:GWW,functionName:'deposit',args:[getAddress(BASE.usdc),amt]});
+    await pub(BASE).waitForTransactionReceipt({hash:h});
+    setStep(s,'ok',` <a href="${BASE.explorer}/tx/${h}" target="_blank">↗</a>`);
+    step('⏱️ now wait ~15–20 min for Base finality, then hit "2 · Check"','ok');
+    refresh();
+  }catch(e){ step('Error: '+(e.shortMessage||e.message),'err'); }
+  finally{ $('#deposit').disabled=false; }
+};
+
+$('#transfer').onclick=async()=>{
+  const v=$('#amt').value; if(!v||+v<=0){alert('Enter an amount');return;}
+  const amt=parseUnits(v,6); $('#transfer').disabled=true; stepsEl.innerHTML='';
+  try{
+    const gw=await gwBalance();
+    if(gw.avail<amt){step(`Gateway balance ${formatUnits(gw.avail,6)} < ${v} — deposit first or wait for finality`,'err');return;}
+    let s=step('Fetch Gateway config','run');
+    const info=await (await fetch(`${API}/v1/info`,{headers:HDR})).json();
+    const src=info.domains.find(d=>d.domain===BASE.domain);
+    setStep(s,'ok');
+    s=step('Sign BurnIntent (EIP-712)','run');
+    const spec={version:1,sourceDomain:BASE.domain,destinationDomain:ARC.domain,
+      sourceContract:b32(GW_WALLET),destinationContract:b32(GW_MINTER),
+      sourceToken:b32(BASE.usdc),destinationToken:b32(ARC.usdc),
+      sourceDepositor:b32(account),destinationRecipient:b32(account),
+      sourceSigner:b32(account),destinationCaller:b32("0x"+"00".repeat(20)),
+      value:amt.toString(),salt:"0x"+"11".repeat(32),hookData:"0x"};
+    const intent={maxBlockHeight:String(src.burnIntentExpirationHeight),maxFee:String(amt/1000n||1n),spec};
+    const sig=await wallet.signTypedData({account,
+      domain:{name:"GatewayWallet",version:"1"},
+      types:{TransferSpec:[{name:"version",type:"uint32"},{name:"sourceDomain",type:"uint32"},
+        {name:"destinationDomain",type:"uint32"},{name:"sourceContract",type:"bytes32"},
+        {name:"destinationContract",type:"bytes32"},{name:"sourceToken",type:"bytes32"},
+        {name:"destinationToken",type:"bytes32"},{name:"sourceDepositor",type:"bytes32"},
+        {name:"destinationRecipient",type:"bytes32"},{name:"sourceSigner",type:"bytes32"},
+        {name:"destinationCaller",type:"bytes32"},{name:"value",type:"uint256"},
+        {name:"salt",type:"bytes32"},{name:"hookData",type:"bytes"}],
+        BurnIntent:[{name:"maxBlockHeight",type:"uint256"},{name:"maxFee",type:"uint256"},{name:"spec",type:"TransferSpec"}]},
+      primaryType:"BurnIntent",message:intent});
+    setStep(s,'ok');
+    s=step('Request attestation from Circle','run');
+    const r=await fetch(`${API}/v1/transfer`,{method:"POST",headers:HDR,
+      body:JSON.stringify([{burnIntent:intent,signature:sig}])});
+    const j=await r.json();
+    if(!r.ok){setStep(s,'err',' — '+JSON.stringify(j).slice(0,200));return;}
+    const att=j.attestation||j.attestationPayload, asig=j.signature;
+    if(!att||!asig){setStep(s,'err',' — no attestation returned: '+JSON.stringify(j).slice(0,180));return;}
+    setStep(s,'ok');
+    s=step(`Mint USDC on ${ARC.name}`,'run'); await switchChain(ARC);
+    const h=await wallet.writeContract({chain:null,address:getAddress(GW_MINTER),abi:GWM,
+      functionName:'gatewayMint',args:[att,asig]});
+    await pub(ARC).waitForTransactionReceipt({hash:h});
+    setStep(s,'ok',` <a href="${ARC.explorer}/tx/${h}" target="_blank">↗</a>`);
+    step(`🎉 ${v} USDC now on Arc`,'ok'); refresh();
+  }catch(e){ step('Error: '+(e.shortMessage||e.message),'err'); }
+  finally{ $('#transfer').disabled=false; }
+};
+if(window.ethereum){window.ethereum.on?.('accountsChanged',()=>location.reload());}
+</script>
+</body>
+</html>
