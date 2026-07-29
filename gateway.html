@@ -116,13 +116,22 @@ function renderPending(dep, gwAvail){
   const mins=(Date.now()-dep.ts)/60000;
   const left=Math.max(0, 20-mins);
   el.style.display='block';
-  el.innerHTML = `⏳ <b>Deposit pending</b>${dep.amount?` — ${dep.amount} USDC`:''}<br>`+
+  el.innerHTML = `⏳ <b>Deposit ${dep.status||'pending'}</b>${dep.amount?` — ${dep.amount} USDC`:''}`+
+    (dep.status?` <span style="color:var(--faint)">(Circle has indexed it — it will credit once Base finality clears)</span>`:'')+`<br>`+
     `deposited ${new Date(dep.ts).toLocaleTimeString()} · <b>${mins.toFixed(0)} min ago</b><br>`+
     (left>0 ? `Base finality usually clears at 15–20 min — <b>~${left.toFixed(0)} min left</b>. This page checks automatically.`
             : `Past the usual window — checking every 30s. If it doesn't appear soon, Circle's indexer is lagging; funds are safe in the contract.`)+
     (dep.hash?`<br><a href="${BASE.explorer}/tx/${dep.hash}" target="_blank">deposit tx ↗</a>`:'');
 }
 
+async function gwDeposits(){
+  try{
+    const r=await fetch(`${API}/v1/deposits`,{method:"POST",headers:HDR,
+      body:JSON.stringify({token:"USDC",sources:[{domain:BASE.domain,depositor:account}]})});
+    const j=await r.json();
+    return j.deposits||[];
+  }catch(e){ return []; }
+}
 async function gwBalance(){
   const r=await fetch(`${API}/v1/balances`,{method:"POST",headers:HDR,
     body:JSON.stringify({token:"USDC",sources:[{domain:BASE.domain,depositor:account}]})});
@@ -144,7 +153,13 @@ async function refresh(verbose){
     (gw.pending>0n?` (pending ${(+formatUnits(gw.pending,6)).toFixed(4)})`:'')+
     `<br>Arc USDC: <b>${(+formatUnits(au,6)).toFixed(4)}</b>`+
     `<br><span style="color:var(--faint)">updated ${new Date().toLocaleTimeString()}</span>`;
-  const dep=getDep(account);
+  // Circle's own view of the deposit — far more informative than balance:0
+  let deps=[];
+  try{ deps=await gwDeposits(); }catch(e){}
+  const live=deps.find(d=>d.status!=='complete');
+  const dep = live ? {ts:Date.parse(live.blockTimestamp), hash:live.transactionHash,
+                      amount:(Number(live.amount)/1e6).toFixed(2), status:live.status}
+                   : getDep(account);
   renderPending(dep, gw.avail);
   if(gw.avail>0n && dep) clearDep(account);
   if(verbose){
