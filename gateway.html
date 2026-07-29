@@ -213,10 +213,24 @@ async function refresh(verbose){
   }
 }
 async function switchChain(c){
-  try{await window.ethereum.request({method:'wallet_switchEthereumChain',params:[{chainId:c.hexId}]});}
-  catch(e){ if(e.code===4902){await window.ethereum.request({method:'wallet_addEthereumChain',params:[{
-    chainId:c.hexId,chainName:c.name,nativeCurrency:{name:'USDC',symbol:'USDC',decimals:18},
-    rpcUrls:[c.rpc],blockExplorerUrls:[c.explorer]}]});} else throw e; } }
+  const addParams={chainId:c.hexId,chainName:c.name,
+    nativeCurrency:{name:'USDC',symbol:'USDC',decimals:18},
+    rpcUrls:[c.rpc],blockExplorerUrls:[c.explorer]};
+  try{
+    await window.ethereum.request({method:'wallet_switchEthereumChain',params:[{chainId:c.hexId}]});
+    return;
+  }catch(e){
+    // Wallets report an unknown chain with different codes (4902, -32603, or nested).
+    // Don't gate on the code — if the switch failed for ANY reason, try adding it.
+    try{
+      await window.ethereum.request({method:'wallet_addEthereumChain',params:[addParams]});
+    }catch(e2){
+      throw new Error(`could not add ${c.name} (chainId ${c.hexId}) to your wallet: ${e2.message||e2}`);
+    }
+    // some wallets add without switching — switch again, ignore if already there
+    try{ await window.ethereum.request({method:'wallet_switchEthereumChain',params:[{chainId:c.hexId}]}); }catch(_){}
+  }
+}
 
 $('#connect').onclick=async()=>{
   if(!window.ethereum){alert('No wallet found. Install MetaMask.');return;}
