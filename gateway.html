@@ -230,7 +230,12 @@ $('#transfer').onclick=async()=>{
       sourceDepositor:b32(account),destinationRecipient:b32(account),
       sourceSigner:b32(account),destinationCaller:b32("0x"+"00".repeat(20)),
       value:amt.toString(),salt:"0x"+"11".repeat(32),hookData:"0x"};
-    const intent={maxBlockHeight:String(src.burnIntentExpirationHeight),maxFee:String(amt/1000n||1n),spec};
+    // Circle enforces a MINIMUM maxFee (0.01 USDC). maxFee is a ceiling you're willing to
+    // pay — the actual charge is lower — so give headroom: max(0.1% of amount, 0.02 USDC).
+    const MIN_FEE=20000n;                       // 0.02 USDC in 6dp
+    const feeRaw = (amt/1000n) > MIN_FEE ? (amt/1000n) : MIN_FEE;
+    const intent={maxBlockHeight:String(src.burnIntentExpirationHeight),maxFee:String(feeRaw),spec};
+    step(`max fee set to ${(Number(feeRaw)/1e6).toFixed(4)} USDC (Circle minimum is 0.01)`,'ok');
     const sig=await wallet.signTypedData({account,
       domain:{name:"GatewayWallet",version:"1"},
       types:{TransferSpec:[{name:"version",type:"uint32"},{name:"sourceDomain",type:"uint32"},
