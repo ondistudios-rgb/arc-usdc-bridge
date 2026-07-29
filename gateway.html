@@ -55,6 +55,7 @@
       <button id="transfer">3 · Bridge</button>
     </div>
 
+    <div id="claim" style="display:none;font-size:12px;color:var(--ok);background:#0c1a1408;border:1px solid #1e4a3555;border-radius:10px;padding:10px 12px;margin-top:14px;line-height:1.8"></div>
     <div id="pending" style="display:none;font-size:12px;color:var(--warn);background:#1c15040f;border:1px solid #3a2f0855;border-radius:10px;padding:10px 12px;margin-top:14px;line-height:1.6"></div>
     <div class="steps" id="steps"></div>
 
@@ -102,6 +103,39 @@ function loadDeps(){ try{return JSON.parse(localStorage.getItem(LSK)||'{}');}cat
 function saveDep(addr,d){ const a=loadDeps(); a[addr.toLowerCase()]=d; localStorage.setItem(LSK,JSON.stringify(a)); }
 function clearDep(addr){ const a=loadDeps(); delete a[addr.toLowerCase()]; localStorage.setItem(LSK,JSON.stringify(a)); }
 function getDep(addr){ return loadDeps()[addr.toLowerCase()]; }
+
+// ---- unclaimed attestations (money already burned, waiting to be minted) ----
+const AK='arc_gw_attestations';
+function loadAtts(){ try{return JSON.parse(localStorage.getItem(AK)||'{}');}catch(e){return {};} }
+function saveAtt(addr,a){ const m=loadAtts(); (m[addr.toLowerCase()] ||= []).push(a); localStorage.setItem(AK,JSON.stringify(m)); }
+function getAtts(addr){ return loadAtts()[addr.toLowerCase()]||[]; }
+function dropAtt(addr,ts){ const m=loadAtts(); m[addr.toLowerCase()]=(m[addr.toLowerCase()]||[]).filter(x=>x.ts!==ts); localStorage.setItem(AK,JSON.stringify(m)); }
+function renderClaim(addr){
+  const el=$('#claim'); const list=getAtts(addr);
+  if(!list.length){ el.style.display='none'; return; }
+  el.style.display='block';
+  el.innerHTML=`<b>💰 ${list.length} unclaimed transfer${list.length>1?'s':''}</b> — already burned, just needs the mint on Arc:<br>`+
+    list.map(a=>`&nbsp;&nbsp;• ${a.amount} USDC (${new Date(a.ts).toLocaleTimeString()}) `+
+      `<button class="claimbtn" data-ts="${a.ts}" style="margin:4px 0;padding:6px 12px;font-size:12px;flex:0 0 auto">Claim now</button>`).join('<br>');
+  el.querySelectorAll('.claimbtn').forEach(b=>b.onclick=()=>claimOne(addr, Number(b.dataset.ts)));
+}
+async function claimOne(addr, ts){
+  const a=getAtts(addr).find(x=>x.ts===ts); if(!a) return;
+  let s=step(`Claiming ${a.amount} USDC on Arc…`,'run');
+  try{
+    await switchChain(ARC);
+    const gas=await pub(ARC).getBalance({address:addr});
+    if(gas===0n){ setStep(s,'err',' — you have 0 gas on Arc. Get a little Arc USDC, then click Claim again. Your attestation is SAFE.'); return; }
+    const h=await wallet.writeContract({chain:null,address:getAddress(GW_MINTER),abi:GWM,
+      functionName:'gatewayMint',args:[a.att,a.sig]});
+    await pub(ARC).waitForTransactionReceipt({hash:h});
+    setStep(s,'ok',` <a href="${ARC.explorer}/tx/${h}" target="_blank">↗</a>`);
+    step(`🎉 ${a.amount} USDC claimed on Arc`,'ok');
+    dropAtt(addr,ts); renderClaim(addr); refresh(false);
+  }catch(e){
+    setStep(s,'err',' — '+(e.shortMessage||e.message)+' · attestation kept, you can retry');
+  }
+}
 
 // find a recent deposit on-chain even if localStorage was cleared / different browser
 async function findOnchainDeposit(addr){
@@ -194,6 +228,7 @@ $('#connect').onclick=async()=>{
     const d=await findOnchainDeposit(account);
     if(d) saveDep(account,d);
   }
+  renderClaim(account);
   refresh(true);
   if(!window.__gwPoll) window.__gwPoll=setInterval(()=>refresh(false), 30000);  // auto-update
 };
@@ -276,14 +311,23 @@ $('#transfer').onclick=async()=>{
     if(!r.ok){setStep(s,'err',' — '+JSON.stringify(j).slice(0,200));return;}
     const att=j.attestation||j.attestationPayload, asig=j.signature;
     if(!att||!asig){setStep(s,'err',' — no attestation returned: '+JSON.stringify(j).slice(0,180));return;}
-    setStep(s,'ok');
+    // CRITICAL: save the attestation BEFORE attempting the mint. If the mint fails
+    // (no gas, rejected, wrong network) the attestation is the ONLY way to claim the
+    // funds — Circle has no endpoint to re-issue it.
+    saveAtt(account,{att,sig:asig,amount:v,ts:Date.now()});
+    setStep(s,'ok',' — attestation SAVED locally (claimable even if the mint fails)');
+    renderClaim(account);
     s=step(`Mint USDC on ${ARC.name}`,'run'); await switchChain(ARC);
     const h=await wallet.writeContract({chain:null,address:getAddress(GW_MINTER),abi:GWM,
       functionName:'gatewayMint',args:[att,asig]});
     await pub(ARC).waitForTransactionReceipt({hash:h});
     setStep(s,'ok',` <a href="${ARC.explorer}/tx/${h}" target="_blank">↗</a>`);
     step(`🎉 ${v} USDC now on Arc`,'ok'); refresh(false);
-  }catch(e){ step('Error: '+(e.shortMessage||e.message),'err'); }
+  }catch(e){
+    step('Error: '+(e.shortMessage||e.message),'err');
+    if(getAtts(account).length) step('⚠️ your attestation is SAVED — use "Claim now" above once you have Arc gas','ok');
+    renderClaim(account);
+  }
   finally{ $('#transfer').disabled=false; }
 };
 if(window.ethereum){window.ethereum.on?.('accountsChanged',()=>location.reload());}
