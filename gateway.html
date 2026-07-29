@@ -91,6 +91,10 @@ function step(t,cls='',href){stepsEl.classList.add('show');const d=document.crea
   stepsEl.appendChild(d);stepsEl.scrollTop=stepsEl.scrollHeight;return d;}
 function setStep(d,cls,x){d.className='s '+cls;if(x)d.innerHTML+=x;}
 const b32=a=>"0x"+"00".repeat(12)+a.slice(2).toLowerCase();
+// Salt MUST be unique per transfer — a fixed salt makes an identical TransferSpec and
+// Circle rejects the replay with "Transfer spec has already been used".
+const randSalt=()=>"0x"+Array.from(crypto.getRandomValues(new Uint8Array(32)))
+  .map(b=>b.toString(16).padStart(2,"0")).join("");
 
 // ---- remember pending deposits across refreshes ----
 const LSK='arc_gw_deposits';
@@ -242,7 +246,7 @@ $('#transfer').onclick=async()=>{
       sourceToken:b32(BASE.usdc),destinationToken:b32(ARC.usdc),
       sourceDepositor:b32(account),destinationRecipient:b32(account),
       sourceSigner:b32(account),destinationCaller:b32("0x"+"00".repeat(20)),
-      value:amt.toString(),salt:"0x"+"11".repeat(32),hookData:"0x"};
+      value:amt.toString(),salt:randSalt(),hookData:"0x"};
     // Circle enforces a MINIMUM maxFee (0.01 USDC). maxFee is a ceiling you're willing to
     // pay — the actual charge is lower — so give headroom: max(0.1% of amount, 0.02 USDC).
     const MIN_FEE=20000n;                       // 0.02 USDC in 6dp
