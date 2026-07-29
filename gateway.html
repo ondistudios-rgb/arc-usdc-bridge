@@ -247,7 +247,11 @@ $('#transfer').onclick=async()=>{
     // pay — the actual charge is lower — so give headroom: max(0.1% of amount, 0.02 USDC).
     const MIN_FEE=20000n;                       // 0.02 USDC in 6dp
     const feeRaw = (amt/1000n) > MIN_FEE ? (amt/1000n) : MIN_FEE;
-    const intent={maxBlockHeight:String(src.burnIntentExpirationHeight),maxFee:String(feeRaw),spec};
+    // /v1/info's expiration height goes stale within seconds of fetching it (Base = 2s blocks),
+    // and maxBlockHeight is a DEADLINE — higher just means the intent stays valid longer.
+    const expiry = BigInt(src.burnIntentExpirationHeight) + 3000n;   // ~100 min of headroom
+    const intent={maxBlockHeight:expiry.toString(),maxFee:String(feeRaw),spec};
+    step(`maxBlockHeight ${expiry} (info said ${src.burnIntentExpirationHeight}, +3000 buffer)`,'ok');
     step(`max fee set to ${(Number(feeRaw)/1e6).toFixed(4)} USDC (Circle minimum is 0.01)`,'ok');
     const sig=await wallet.signTypedData({account,
       domain:{name:"GatewayWallet",version:"1"},
