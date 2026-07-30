@@ -62,12 +62,14 @@
     <details style="margin-top:14px;font-size:12px;color:var(--faint)">
       <summary style="cursor:pointer">⚙️ Arc RPC endpoint (fix "internal error" / balances not loading)</summary>
       <div style="margin-top:8px;line-height:1.6">
-        Arc has one shared public RPC and it gets saturated. A free
-        <a href="https://thirdweb.com/dashboard/settings/api-keys" target="_blank">thirdweb clientId</a>
-        gives you a private endpoint:<br>
-        <code>https://5042.YOUR_CLIENT_ID.rpc.thirdweb.com</code>
+        Arc mainnet is <b>not publicly launched</b> — thirdweb's <code>5042.rpc.thirdweb.com</code>
+        is the only endpoint that serves it, and it goes down. dRPC and GetBlock offer Arc
+        <i>testnet</i> only; Chainlist lists no RPC for 5042.<br>
+        A private thirdweb clientId does <b>not</b> help — their infra is fine (Arc testnet
+        works); it's their upstream link to Arc <i>mainnet</i> that breaks. Outages are a wait.<br>
+        If you have a partner/private endpoint, paste it here:
         <div style="display:flex;gap:8px;margin-top:8px">
-          <input id="rpcIn" placeholder="https://5042.&lt;clientId&gt;.rpc.thirdweb.com"
+          <input id="rpcIn" placeholder="https://your-private-arc-endpoint"
                  style="flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid #2a2f3a;background:#0e1116;color:#e6e6e6;font-size:12px">
           <button id="rpcSave" style="padding:8px 14px;font-size:12px">Save</button>
           <button id="rpcTest" style="padding:8px 14px;font-size:12px">Test</button>
