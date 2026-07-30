@@ -277,6 +277,11 @@ async function refresh(verbose){
   $('#bal').innerHTML=`Base USDC: <b>${(+formatUnits(bu,6)).toFixed(4)}</b> · `+
     `Gateway ready: <b>${(+formatUnits(gw.avail,6)).toFixed(4)}</b>`+
     (gw.pending>0n?` (pending ${(+formatUnits(gw.pending,6)).toFixed(4)})`:'')+
+    // Stage 4: burned into an attestation, not yet minted. This was invisible before, which
+    // made a SUCCESSFUL bridge look like the money had vanished from every balance shown.
+    (()=>{const t=getAtts(account).reduce((s,a)=>s+parseFloat(a.amount||0),0);
+      return t>0?`<br>In transit to Arc: <b style="color:var(--ok)">${t.toFixed(4)}</b>`+
+        ` <span style="color:var(--faint)">(burned — claim below)</span>`:''})()+
     `<br>Arc USDC: `+(arcDown
       ? `<b style="color:var(--warn,#ffa500)">unavailable — Arc RPC down</b>`
       : `<b>${(+formatUnits(au,6)).toFixed(4)}</b>`)+
