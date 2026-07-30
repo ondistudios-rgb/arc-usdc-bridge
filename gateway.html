@@ -91,9 +91,12 @@ const API="https://gateway-api.circle.com";
 const HDR={"Content-Type":"application/json","X-ARC-PRIVATE-MAINNET-ENABLED":"true"};
 const BASE={name:"Base",hexId:"0x2105",chainId:8453,domain:6,rpc:"https://mainnet.base.org",
   usdc:"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",explorer:"https://basescan.org"};
-// Arc has ONE public RPC and it goes down (its proxy answers eth_chainId from config while
-// every real state read 500s). Allow a user-supplied endpoint first — a free thirdweb
-// clientId gives a private quota instead of the shared, saturated pool.
+// Arc mainnet is pre-launch: thirdweb's 5042 endpoint is the ONLY one serving it (dRPC and
+// GetBlock are testnet-only; Chainlist has rpc:[] for 5042). It fails in a misleading way —
+// the proxy keeps answering eth_chainId from static config while every real state read 500s,
+// so ALWAYS health-check with eth_blockNumber. A private clientId does NOT help: thirdweb's
+// own infra is healthy during outages (Arc testnet keeps serving); it's their upstream link
+// to Arc mainnet that breaks. The slot below is for a genuine partner/private endpoint.
 const customRpc=()=>{try{return (localStorage.getItem('arcRpc')||'').trim()}catch(e){return ''}};
 const ARC_RPCS=()=>[customRpc(),"https://5042.rpc.thirdweb.com","https://arc.rpc.thirdweb.com"]
   .filter(u=>/^https?:\/\//.test(u));
