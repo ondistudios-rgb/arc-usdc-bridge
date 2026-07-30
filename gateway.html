@@ -155,7 +155,37 @@ function renderClaim(addr){
   el.innerHTML=`<b>💰 ${list.length} unclaimed transfer${list.length>1?'s':''}</b> — already burned, just needs the mint on Arc:<br>`+
     list.map(a=>`&nbsp;&nbsp;• ${a.amount} USDC (${new Date(a.ts).toLocaleTimeString()}) `+
       `<button class="claimbtn" data-ts="${a.ts}" style="margin:4px 0;padding:6px 12px;font-size:12px;flex:0 0 auto">Claim now</button>`).join('<br>');
+  // ⚠️ Circle has NO attestation re-issue endpoint (/v1/transfers, /v1/attestations all 404).
+  // This browser's localStorage is the ONLY copy. Clearing site data burns the funds.
+  el.innerHTML+=`<div style="margin-top:10px;padding-top:9px;border-top:1px solid #1e4a3555;color:var(--warn)">
+     ⚠️ <b>This browser holds the only copy.</b> Circle cannot re-issue an attestation —
+     clearing site data would make these unrecoverable.
+     <button id="attBackup" style="margin-left:6px;padding:5px 11px;font-size:11px">⬇ Backup</button>
+     <button id="attRestore" style="padding:5px 11px;font-size:11px">⬆ Restore</button>
+     <input id="attFile" type="file" accept="application/json" style="display:none">
+   </div>`;
   el.querySelectorAll('.claimbtn').forEach(b=>b.onclick=()=>claimOne(addr, Number(b.dataset.ts)));
+  $('#attBackup').onclick=()=>{
+    const blob=new Blob([JSON.stringify({wallet:addr,saved:new Date().toISOString(),attestations:getAtts(addr)},null,2)],
+      {type:'application/json'});
+    const u=URL.createObjectURL(blob), a=document.createElement('a');
+    a.href=u; a.download=`arc-attestations-${addr.slice(0,8)}.json`; a.click();
+    URL.revokeObjectURL(u);
+    step('Backup downloaded — keep it until every transfer is claimed.','ok');
+  };
+  $('#attRestore').onclick=()=>$('#attFile').click();
+  $('#attFile').onchange=async ev=>{
+    const f=ev.target.files[0]; if(!f) return;
+    try{
+      const j=JSON.parse(await f.text());
+      const incoming=j.attestations||[];
+      const have=new Set(getAtts(addr).map(x=>x.ts));
+      let n=0;
+      for(const a of incoming) if(a&&a.att&&a.sig&&!have.has(a.ts)){ saveAtt(addr,a); n++; }
+      step(n?`Restored ${n} attestation${n>1?'s':''}.`:'Nothing new to restore.', n?'ok':'warn');
+      renderClaim(addr);
+    }catch(e){ step('Could not read that backup file: '+(e.message||e),'err'); }
+  };
 }
 async function claimOne(addr, ts){
   const a=getAtts(addr).find(x=>x.ts===ts); if(!a) return;
