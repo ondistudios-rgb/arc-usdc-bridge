@@ -59,20 +59,44 @@
     <div id="pending" style="display:none;font-size:12px;color:var(--warn);background:#1c15040f;border:1px solid #3a2f0855;border-radius:10px;padding:10px 12px;margin-top:14px;line-height:1.6"></div>
     <div class="steps" id="steps"></div>
 
+    <details style="margin-top:14px;font-size:12px;color:var(--faint)">
+      <summary style="cursor:pointer">⚙️ Arc RPC endpoint (fix "internal error" / balances not loading)</summary>
+      <div style="margin-top:8px;line-height:1.6">
+        Arc has one shared public RPC and it gets saturated. A free
+        <a href="https://thirdweb.com/dashboard/settings/api-keys" target="_blank">thirdweb clientId</a>
+        gives you a private endpoint:<br>
+        <code>https://5042.YOUR_CLIENT_ID.rpc.thirdweb.com</code>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <input id="rpcIn" placeholder="https://5042.&lt;clientId&gt;.rpc.thirdweb.com"
+                 style="flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid #2a2f3a;background:#0e1116;color:#e6e6e6;font-size:12px">
+          <button id="rpcSave" style="padding:8px 14px;font-size:12px">Save</button>
+          <button id="rpcTest" style="padding:8px 14px;font-size:12px">Test</button>
+        </div>
+        <div style="margin-top:6px">Your attestations are stored locally and stay safe through any RPC outage.</div>
+      </div>
+    </details>
+
     <div class="warn">⏱️ <b>Deposit needs Base finality (~15–20 min)</b> before it can be bridged. Deposit → wait → Check → Bridge. After that the mint on Arc lands in seconds.</div>
     <div class="note">Non-custodial — every transaction is signed in your own wallet; this page never holds funds or keys. Arc is only exposed by Circle's API with the <code>X-ARC-PRIVATE-MAINNET-ENABLED</code> header, so this route is early/undocumented. Start small.</div>
   </div>
 </div>
 
 <script type="module">
-import { createWalletClient, createPublicClient, custom, http, parseUnits, formatUnits, getAddress }
+import { createWalletClient, createPublicClient, custom, http, fallback, parseUnits, formatUnits, getAddress }
   from 'https://esm.sh/viem@2.21.55';
 
 const API="https://gateway-api.circle.com";
 const HDR={"Content-Type":"application/json","X-ARC-PRIVATE-MAINNET-ENABLED":"true"};
 const BASE={name:"Base",hexId:"0x2105",chainId:8453,domain:6,rpc:"https://mainnet.base.org",
   usdc:"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",explorer:"https://basescan.org"};
-const ARC={name:"Arc",hexId:"0x13b2",chainId:5042,domain:26,rpc:"https://5042.rpc.thirdweb.com",
+// Arc has ONE public RPC and it goes down (its proxy answers eth_chainId from config while
+// every real state read 500s). Allow a user-supplied endpoint first — a free thirdweb
+// clientId gives a private quota instead of the shared, saturated pool.
+const customRpc=()=>{try{return (localStorage.getItem('arcRpc')||'').trim()}catch(e){return ''}};
+const ARC_RPCS=()=>[customRpc(),"https://5042.rpc.thirdweb.com","https://arc.rpc.thirdweb.com"]
+  .filter(u=>/^https?:\/\//.test(u));
+const ARC={name:"Arc",hexId:"0x13b2",chainId:5042,domain:26,
+  get rpc(){return ARC_RPCS()[0]},
   usdc:"0x3600000000000000000000000000000000000000",explorer:"https://arcscan.app"};
 const GW_WALLET="0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE";
 const GW_MINTER="0x2222222d7164433c4C09B0b0D809a9b52C04C205";
@@ -84,7 +108,21 @@ const GWW=[{name:"deposit",type:"function",stateMutability:"nonpayable",inputs:[
 const GWM=[{name:"gatewayMint",type:"function",stateMutability:"nonpayable",inputs:[{type:"bytes"},{type:"bytes"}],outputs:[]}];
 
 const $=s=>document.querySelector(s);
-const pub=c=>createPublicClient({transport:http(c.rpc)});
+// Arc: try every known endpoint, retry each — a dead upstream shouldn't look like "no funds".
+const pub=c=>createPublicClient({transport:
+  c.chainId===5042
+    ? fallback(ARC_RPCS().map(u=>http(u,{retryCount:3,retryDelay:800,timeout:15000})),{rank:false})
+    : http(c.rpc)});
+
+// Distinguish "the RPC is broken" from "you have no money" — they looked identical before.
+function rpcDown(e){
+  const m=String(e?.details||e?.shortMessage||e?.message||e);
+  return /not able to process|internal error|-32603|503|502|504|fetch failed|Failed to fetch|timed out/i.test(m);
+}
+function arcRpcHelp(){
+  step("Arc's public RPC is down — this is NOT your funds. Attestations are saved; retry Claim later.","err");
+  step("Faster fix: paste a private Arc RPC below (free thirdweb clientId → https://<clientId>.rpc.thirdweb.com).","warn");
+}
 let account=null, wallet=null;
 const stepsEl=$('#steps');
 function step(t,cls='',href){stepsEl.classList.add('show');const d=document.createElement('div');
@@ -124,7 +162,13 @@ async function claimOne(addr, ts){
   let s=step(`Claiming ${a.amount} USDC on Arc…`,'run');
   try{
     await switchChain(ARC);
-    const gas=await pub(ARC).getBalance({address:addr});
+    // Read gas, but never let an RPC outage masquerade as "you have no gas".
+    let gas=null;
+    try{ gas=await pub(ARC).getBalance({address:addr}); }
+    catch(ge){
+      if(rpcDown(ge)){ setStep(s,'err',' — Arc RPC is unreachable, so the mint can’t be sent. Your attestation is SAFE and kept.'); arcRpcHelp(); return; }
+      throw ge;
+    }
     if(gas===0n){ setStep(s,'err',' — you have 0 gas on Arc. Get a little Arc USDC, then click Claim again. Your attestation is SAFE.'); return; }
     const h=await wallet.writeContract({chain:null,address:getAddress(GW_MINTER),abi:GWM,
       functionName:'gatewayMint',args:[a.att,a.sig]});
@@ -133,7 +177,12 @@ async function claimOne(addr, ts){
     step(`🎉 ${a.amount} USDC claimed on Arc`,'ok');
     dropAtt(addr,ts); renderClaim(addr); refresh(false);
   }catch(e){
-    setStep(s,'err',' — '+(e.shortMessage||e.message)+' · attestation kept, you can retry');
+    if(rpcDown(e)){
+      setStep(s,'err',' — Arc RPC outage (not your funds). Attestation kept — retry when Arc is back.');
+      arcRpcHelp();
+    } else {
+      setStep(s,'err',' — '+(e.shortMessage||e.message)+' · attestation kept, you can retry');
+    }
   }
 }
 
@@ -187,14 +236,20 @@ async function refresh(verbose){
   let bu=0n,au=0n,gw={avail:0n,pending:0n}, errs=[];
   try{ bu=await pub(BASE).readContract({address:getAddress(BASE.usdc),abi:ERC20,functionName:'balanceOf',args:[account]}); }
   catch(e){ errs.push('Base RPC: '+(e.shortMessage||e.message||e)); }
+  let arcDown=false;
   try{ au=await pub(ARC).readContract({address:getAddress(ARC.usdc),abi:ERC20,functionName:'balanceOf',args:[account]}); }
-  catch(e){ errs.push('Arc RPC: '+(e.shortMessage||e.message||e)); }
+  catch(e){
+    if(rpcDown(e)){ arcDown=true; errs.push('Arc RPC is down — your Arc balance below is UNKNOWN, not zero.'); }
+    else errs.push('Arc RPC: '+(e.shortMessage||e.message||e));
+  }
   try{ gw=await gwBalance(); }
   catch(e){ errs.push('Circle API: '+(e.message||e)); }
   $('#bal').innerHTML=`Base USDC: <b>${(+formatUnits(bu,6)).toFixed(4)}</b> · `+
     `Gateway ready: <b>${(+formatUnits(gw.avail,6)).toFixed(4)}</b>`+
     (gw.pending>0n?` (pending ${(+formatUnits(gw.pending,6)).toFixed(4)})`:'')+
-    `<br>Arc USDC: <b>${(+formatUnits(au,6)).toFixed(4)}</b>`+
+    `<br>Arc USDC: `+(arcDown
+      ? `<b style="color:var(--warn,#ffa500)">unavailable — Arc RPC down</b>`
+      : `<b>${(+formatUnits(au,6)).toFixed(4)}</b>`)+
     `<br><span style="color:var(--faint)">updated ${new Date().toLocaleTimeString()}</span>`;
   // Circle's own view of the deposit — far more informative than balance:0
   let deps=[];
@@ -247,6 +302,26 @@ $('#connect').onclick=async()=>{
   if(!window.__gwPoll) window.__gwPoll=setInterval(()=>refresh(false), 30000);  // auto-update
 };
 $('#refresh').onclick=()=>refresh(true);
+
+// ---- custom Arc RPC ----
+try{ $('#rpcIn').value=customRpc(); }catch(e){}
+$('#rpcSave').onclick=()=>{
+  const v=$('#rpcIn').value.trim();
+  if(v && !/^https?:\/\//.test(v)){ step('RPC must start with https://','err'); return; }
+  try{ v? localStorage.setItem('arcRpc',v) : localStorage.removeItem('arcRpc'); }catch(e){}
+  step(v?`Arc RPC set — using ${v}`:'Arc RPC reset to the public endpoint','ok');
+  refresh(true);
+};
+$('#rpcTest').onclick=async()=>{
+  const v=$('#rpcIn').value.trim()||ARC_RPCS()[0];
+  const s=step(`Testing ${v}…`,'run');
+  try{
+    // eth_chainId answers from cache even when a node is dead — block number is the real test
+    const c=createPublicClient({transport:http(v,{retryCount:0,timeout:12000})});
+    const bn=await c.getBlockNumber();
+    setStep(s,'ok',` — healthy, block ${bn}`);
+  }catch(e){ setStep(s,'err',rpcDown(e)?' — node unreachable (proxy may answer chainId but the chain data is down)':' — '+(e.shortMessage||e.message)); }
+};
 // MAX = full Gateway balance minus fee headroom, so amount+fee always fits
 $('#max').onclick=async()=>{
   if(!account){ step('connect your wallet first','err'); return; }
