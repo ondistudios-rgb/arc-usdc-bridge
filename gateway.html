@@ -375,11 +375,17 @@ $('#transfer').onclick=async()=>{
     // pay — the actual charge is lower — so give headroom: max(0.1% of amount, 0.02 USDC).
     const MIN_FEE=20000n;                       // 0.02 USDC in 6dp
     const feeRaw = (amt/1000n) > MIN_FEE ? (amt/1000n) : MIN_FEE;
-    // /v1/info's expiration height goes stale within seconds of fetching it (Base = 2s blocks),
-    // and maxBlockHeight is a DEADLINE — higher just means the intent stays valid longer.
-    const expiry = BigInt(src.burnIntentExpirationHeight) + 3000n;   // ~100 min of headroom
+    // maxBlockHeight is compared against the DESTINATION chain's block.number, inside
+    // GatewayMinter on Arc:
+    //     if (maxBlockHeight < block.number) revert AttestationExpiredAtIndex(...)
+    // So it must come from the DESTINATION's burnIntentExpirationHeight, not the source's.
+    // Base->Arc happened to work with the source value only because Base's height (~49.6M)
+    // dwarfs Arc's (~13.0M). The reverse direction would sign an already-expired intent.
+    // +3000 buffer because /v1/info goes stale within seconds of fetching it.
+    const dstInfo = info.domains.find(d=>d.domain===ARC.domain) || src;
+    const expiry = BigInt(dstInfo.burnIntentExpirationHeight) + 3000n;
     const intent={maxBlockHeight:expiry.toString(),maxFee:String(feeRaw),spec};
-    step(`maxBlockHeight ${expiry} (info said ${src.burnIntentExpirationHeight}, +3000 buffer)`,'ok');
+    step(`maxBlockHeight ${expiry} — from ${dstInfo===src?'SOURCE (fallback)':'destination Arc'}, ~7 days of validity`,'ok');
     step(`max fee set to ${(Number(feeRaw)/1e6).toFixed(4)} USDC (Circle minimum is 0.01)`,'ok');
     const sig=await wallet.signTypedData({account,
       domain:{name:"GatewayWallet",version:"1"},
