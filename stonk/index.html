@@ -59,6 +59,9 @@
 <div class="card">
   <h2>2 · Create the market</h2>
   <div class="note" style="margin-top:2px">Defaults copied from the team's own working launch (marketId 1) — proven-good values.</div>
+  <label>Factory</label>
+  <select id="fac" style="width:100%;background:#0a1017;border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:10px 12px;font-size:13px;font-family:var(--mono)"></select>
+  <div class="note" style="margin-top:5px">They redeploy this — always launch on the newest.</div>
   <label>Collection address</label><input id="mcoll" placeholder="0x… (filled by step 1)">
   <div class="row">
     <div><label>Token name</label><input id="mname" value="My Token"></div>
@@ -99,9 +102,22 @@ const BS="https://robinhoodchain.blockscout.com";
 const CHAIN={id:4663,hexId:"0x1237",name:"Robinhood Chain",
   nativeCurrency:{name:"Ether",symbol:"ETH",decimals:18},
   rpcUrls:{default:{http:[RPC]}}};
-const FACTORY="0x2E2ac98951BE5eaC6225EfBDCF9C533a507B9451";
+// The team REDEPLOYS the whole stack — a fresh AMMFactoryV2 landed 2h after the first.
+// Always launch on the CURRENT one; the old one gets polluted with tests and squats.
+// Newest first. Add new addresses here as they appear (ABI has been identical so far).
+const FACTORIES=[
+  {addr:"0x840E886C1185eDae2CA1f0dbD242a00cE84C60d9", label:"newest — deployed 12:13 (use this)"},
+  {addr:"0x2E2ac98951BE5eaC6225EfBDCF9C533a507B9451", label:"original — deployed 10:03"},
+];
+let FACTORY=FACTORIES[0].addr;
 
 const $=s=>document.querySelector(s);
+function initFactories(){
+  const el=$('#fac'); if(!el) return;
+  el.innerHTML=FACTORIES.map((f,i)=>`<option value="${f.addr}">${f.addr.slice(0,12)}… — ${f.label}</option>`).join('');
+  el.onchange=()=>{ FACTORY=el.value; step('factory set to '+FACTORY,'ok'); };
+}
+initFactories();
 const stepsEl=$('#steps');
 function step(t,cls=''){stepsEl.classList.add('show');const d=document.createElement('div');
   d.className='s '+cls; d.innerHTML=t; stepsEl.appendChild(d); stepsEl.scrollTop=stepsEl.scrollHeight; return d;}
