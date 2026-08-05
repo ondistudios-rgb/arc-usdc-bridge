@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Stonk Launcher — deploy collection + market</title>
+<style>
+ :root{--bg:#080c12;--panel:#111a26;--panel2:#0d141d;--line:#1e2a3a;--txt:#e8eff8;--dim:#8598b0;
+   --faint:#5a6b82;--accent:#37e0c8;--accent2:#2b8cff;--ok:#25e08a;--warn:#f5b23d;--err:#ff5c6c;
+   --mono:ui-monospace,Menlo,monospace}
+ *{box-sizing:border-box} html,body{margin:0}
+ body{background:radial-gradient(900px 500px at 50% -12%,#122132 0%,var(--bg) 60%);color:var(--txt);
+   font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;min-height:100vh;
+   display:flex;flex-direction:column;align-items:center;padding:26px 16px}
+ .wrap{width:100%;max-width:620px}
+ header{display:flex;align-items:center;gap:11px;margin-bottom:4px}
+ .logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:grid;place-items:center;color:#04121a;font-weight:900}
+ h1{font-size:19px;margin:0}
+ .tag{font-size:12px;color:var(--faint);margin:0 0 16px 45px}
+ .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:14px}
+ label{display:block;font-size:11px;color:var(--dim);margin:11px 0 5px;text-transform:uppercase;letter-spacing:.5px}
+ input{width:100%;background:#0a1017;border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:10px 12px;font-size:14px;outline:none;font-family:var(--mono)}
+ input:focus{border-color:var(--accent2)}
+ .row{display:flex;gap:9px}.row>div{flex:1}
+ button{width:100%;margin-top:14px;border:0;border-radius:11px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#04121a}
+ button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
+ button:disabled{opacity:.4;cursor:not-allowed}
+ .steps{margin-top:14px;font-size:12px;font-family:var(--mono);background:#080d13;border:1px solid var(--line);border-radius:11px;padding:11px;max-height:260px;overflow:auto;display:none}
+ .steps.show{display:block}
+ .s{padding:3px 0;color:var(--dim)}.s.ok{color:var(--ok)}.s.run{color:var(--accent)}.s.err{color:var(--err)}
+ .s a{color:var(--accent2)}
+ .warn{font-size:12px;color:var(--warn);background:#1c15040f;border:1px solid #3a2f0855;border-radius:10px;padding:10px 12px;margin-top:12px;line-height:1.55}
+ .note{font-size:11px;color:var(--faint);margin-top:10px;line-height:1.6}
+ .badge{display:inline-block;font-size:10px;padding:2px 7px;border-radius:20px;background:#1e2a3a;color:var(--dim);margin-left:6px}
+ h2{font-size:14px;margin:0 0 2px}
+</style></head>
+<body><div class="wrap">
+<header><div class="logo">S</div><h1>Stonk Launcher</h1></header>
+<div class="tag">Robinhood Chain 4663 · AMMFactoryV2 · you sign every transaction yourself</div>
+
+<div class="card">
+  <button id="connect">Connect Wallet</button>
+  <div class="bal" id="who" style="font-size:12px;color:var(--dim);margin-top:9px"></div>
+</div>
+
+<div class="card">
+  <h2>1 · NFT collection <span class="badge">required first</span></h2>
+  <div class="note" style="margin-top:2px">createMarket anchors the market to an existing ERC-721. This deploys a minimal one and mints the initial NFTs to you.</div>
+  <div class="row">
+    <div><label>Collection name</label><input id="cname" value="My Collection"></div>
+    <div><label>Symbol</label><input id="csym" value="MYC"></div>
+  </div>
+  <div class="row">
+    <div><label>NFTs to mint</label><input id="cmint" type="number" value="10" min="1"></div>
+    <div><label>Base URI</label><input id="curi" value=""></div>
+  </div>
+  <button id="deploy" class="ghost" disabled>Deploy collection</button>
+  <div class="note" id="colout"></div>
+</div>
+
+<div class="card">
+  <h2>2 · Create the market</h2>
+  <div class="note" style="margin-top:2px">Defaults copied from the team's own working launch (marketId 1) — proven-good values.</div>
+  <label>Collection address</label><input id="mcoll" placeholder="0x… (filled by step 1)">
+  <div class="row">
+    <div><label>Token name</label><input id="mname" value="My Token"></div>
+    <div><label>Token symbol</label><input id="msym" value="MYT"></div>
+  </div>
+  <div class="row">
+    <div><label>Tokens per NFT</label><input id="mtpn" value="1000"></div>
+    <div><label>Total supply</label><input id="msup" value="1000000"></div>
+  </div>
+  <div class="row">
+    <div><label>randomFee bps</label><input id="frnd" value="500"></div>
+    <div><label>specificFee bps</label><input id="fspc" value="1500"></div>
+  </div>
+  <div class="row">
+    <div><label>amm bps</label><input id="bamm" value="9000"></div>
+    <div><label>loan bps</label><input id="bloan" value="500"></div>
+    <div><label>reward bps</label><input id="brew" value="0"></div>
+  </div>
+  <div class="row">
+    <div><label>borrow APY bps</label><input id="apy" value="1000"></div>
+    <div><label>liq incentive bps</label><input id="liq" value="200"></div>
+  </div>
+  <button id="create" disabled>Create market</button>
+</div>
+
+<div class="steps" id="steps"></div>
+<div class="warn">⚠️ <b>This is mainnet and permanent.</b> Anything you deploy is public forever. Gas is tiny (~$0.45 total) but the market cannot be deleted. <b>Do not use a name that impersonates $CLOCKIN or any real project.</b></div>
+<div class="note">Non-custodial — every transaction is signed in your own wallet; this page never holds funds or keys. createMarket is permissionless with a 0 fee, so anyone can call it; that also means a market existing on this factory proves nothing about authenticity.</div>
+</div>
+
+<script type="module">
+import { createWalletClient, createPublicClient, custom, http, getAddress, parseUnits }
+  from 'https://esm.sh/viem@2.21.55';
+import { COLLECTION_BYTECODE, COLLECTION_ABI, FACTORY_ABI } from './artifacts.js';
+
+const RPC="https://rpc.mainnet.chain.robinhood.com";
+const BS="https://robinhoodchain.blockscout.com";
+const CHAIN={id:4663,hexId:"0x1237",name:"Robinhood Chain",
+  nativeCurrency:{name:"Ether",symbol:"ETH",decimals:18},
+  rpcUrls:{default:{http:[RPC]}}};
+const FACTORY="0x2E2ac98951BE5eaC6225EfBDCF9C533a507B9451";
+
+const $=s=>document.querySelector(s);
+const stepsEl=$('#steps');
+function step(t,cls=''){stepsEl.classList.add('show');const d=document.createElement('div');
+  d.className='s '+cls; d.innerHTML=t; stepsEl.appendChild(d); stepsEl.scrollTop=stepsEl.scrollHeight; return d;}
+function setStep(d,cls,extra=''){d.className='s '+cls; if(extra) d.innerHTML+=extra;}
+
+let account=null, wallet=null;
+const pub=()=>createPublicClient({transport:http(RPC,{retryCount:3,timeout:20000})});
+
+async function switchChain(){
+  try{ await window.ethereum.request({method:'wallet_switchEthereumChain',params:[{chainId:CHAIN.hexId}]}); }
+  catch(e){
+    // add on ANY failure — wallets report unknown chains with inconsistent error codes
+    await window.ethereum.request({method:'wallet_addEthereumChain',params:[{
+      chainId:CHAIN.hexId, chainName:CHAIN.name, nativeCurrency:CHAIN.nativeCurrency,
+      rpcUrls:[RPC], blockExplorerUrls:[BS]}]});
+  }
+}
+
+$('#connect').onclick=async()=>{
+  if(!window.ethereum){ step('No wallet found — install MetaMask','err'); return; }
+  try{
+    const [a]=await window.ethereum.request({method:'eth_requestAccounts'});
+    account=getAddress(a);
+    await switchChain();
+    wallet=createWalletClient({account,transport:custom(window.ethereum)});
+    const bal=await pub().getBalance({address:account});
+    $('#who').innerHTML=`<b>${account.slice(0,10)}…${account.slice(-4)}</b> · ${(Number(bal)/1e18).toFixed(6)} ETH`;
+    $('#deploy').disabled=false; $('#create').disabled=false;
+    step('connected on Robinhood Chain','ok');
+  }catch(e){ step('connect failed: '+(e.shortMessage||e.message),'err'); }
+};
+
+$('#deploy').onclick=async()=>{
+  const s=step('deploying collection…','run');
+  try{
+    await switchChain();
+    const hash=await wallet.deployContract({
+      abi:COLLECTION_ABI, bytecode:COLLECTION_BYTECODE, chain:null, account,
+      args:[$('#cname').value, $('#csym').value, BigInt($('#cmint').value||'1'), $('#curi').value||'']});
+    setStep(s,'run',` — tx sent, waiting…`);
+    const r=await pub().waitForTransactionReceipt({hash});
+    if(!r.contractAddress) throw new Error('no contract address in receipt');
+    setStep(s,'ok',` — <a href="${BS}/address/${r.contractAddress}" target="_blank">${r.contractAddress}</a>`);
+    $('#mcoll').value=r.contractAddress;
+    $('#colout').innerHTML=`collection deployed: <b>${r.contractAddress}</b> — auto-filled into step 2`;
+  }catch(e){ setStep(s,'err',' — '+(e.shortMessage||e.message)); }
+};
+
+$('#create').onclick=async()=>{
+  const coll=$('#mcoll').value.trim();
+  if(!/^0x[a-fA-F0-9]{40}$/.test(coll)){ step('enter a valid collection address (run step 1 first)','err'); return; }
+  const s=step('creating market…','run');
+  try{
+    await switchChain();
+    const p={
+      collection:getAddress(coll),
+      name:$('#mname').value, symbol:$('#msym').value,
+      tokensPerNFT:parseUnits($('#mtpn').value||'0',18),
+      totalSupply:parseUnits($('#msup').value||'0',18),
+      fees:{randomFeeBps:Number($('#frnd').value),specificFeeBps:Number($('#fspc').value)},
+      buckets:{ammBps:Number($('#bamm').value),loanBps:Number($('#bloan').value),rewardBps:Number($('#brew').value)},
+      borrowAPYBps:Number($('#apy').value),
+      liquidationIncentiveBps:Number($('#liq').value),
+      governance:{enabled:false,proposalFee:0n,minProposerStake:0n}
+    };
+    step(`supply ${$('#msup').value} · ${$('#mtpn').value} tokens per NFT`,'ok');
+    const hash=await wallet.writeContract({address:getAddress(FACTORY),abi:FACTORY_ABI,
+      functionName:'createMarket',args:[p],chain:null,account});
+    setStep(s,'run',' — tx sent, waiting…');
+    const r=await pub().waitForTransactionReceipt({hash});
+    setStep(s,'ok',` — <a href="${BS}/tx/${hash}" target="_blank">receipt ↗</a>`);
+    // MarketCreated is the LAST log of the tx — pull the addresses straight out of it
+    const ev=r.logs.filter(l=>l.address.toLowerCase()===FACTORY.toLowerCase()).pop();
+    if(ev && ev.topics.length>3){
+      const tok='0x'+ev.topics[3].slice(-40);
+      step(`🎉 market created — token <a href="${BS}/token/${tok}" target="_blank">${tok}</a>`,'ok');
+      step(`<a href="https://gmgn.ai/robinhood/token/${tok}" target="_blank">gmgn ↗</a> · <a href="https://dexscreener.com/robinhood/${tok}" target="_blank">DexScreener ↗</a>`,'ok');
+    }
+  }catch(e){ setStep(s,'err',' — '+(e.shortMessage||e.message)); }
+};
+</script></body></html>
